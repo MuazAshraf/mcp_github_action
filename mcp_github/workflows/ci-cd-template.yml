@@ -1,0 +1,260 @@
+name: 'CI/CD Pipeline'
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      skip_tests:
+        description: 'Skip tests'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: '18.x'
+  PYTHON_VERSION: '3.11'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Job 1: Code Quality & Testing
+  quality-check:
+    name: 'Code Quality & Tests'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 'Checkout Code'
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: 'Setup Node.js'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: 'Setup Python'
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: 'Install Dependencies'
+      run: |
+        npm ci
+        pip install -r requirements.txt
+        pip install flake8 pytest black isort
+    
+    - name: 'Code Linting'
+      run: |
+        npm run lint
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        black --check .
+        isort --check-only .
+    
+    - name: 'Security Scanning'
+      run: |
+        npm audit --audit-level moderate
+        pip-audit
+    
+    - name: 'Run Tests'
+      if: ${{ !inputs.skip_tests }}
+      run: |
+        npm test
+        pytest --cov=. --cov-report=xml
+    
+    - name: 'Upload Coverage'
+      if: ${{ !inputs.skip_tests }}
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  # Job 2: Build & Package
+  build:
+    name: 'Build Application'
+    runs-on: ubuntu-latest
+    needs: quality-check
+    if: ${{ success() }}
+    
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+    - name: 'Checkout Code'
+      uses: actions/checkout@v4
+    
+    - name: 'Setup Docker Buildx'
+      uses: docker/setup-buildx-action@v3
+    
+    - name: 'Login to Container Registry'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: 'Extract Metadata'
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+    
+    - name: 'Build and Push Image'
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: 'Generate SBOM'
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ steps.meta.outputs.tags }}
+        format: spdx-json
+        output-file: sbom.spdx.json
+    
+    - name: 'Upload SBOM'
+      uses: actions/upload-artifact@v3
+      with:
+        name: sbom
+        path: sbom.spdx.json
+
+  # Job 3: Security Scanning
+  security-scan:
+    name: 'Security Scan'
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ success() }}
+    
+    steps:
+    - name: 'Scan Image for Vulnerabilities'
+      uses: anchore/scan-action@v3
+      id: scan
+      with:
+        image: ${{ needs.build.outputs.image-tag }}
+        fail-build: false
+        severity-cutoff: high
+    
+    - name: 'Upload Scan Results'
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif }}
+
+  # Job 4: Deploy to Staging
+  deploy-staging:
+    name: 'Deploy to Staging'
+    runs-on: ubuntu-latest
+    needs: [build, security-scan]
+    if: ${{ success() && (github.ref == 'refs/heads/develop' || inputs.environment == 'staging') }}
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.url }}
+    
+    steps:
+    - name: 'Deploy to Staging'
+      id: deploy
+      run: |
+        echo "Deploying ${{ needs.build.outputs.image-tag }} to staging..."
+        # Add your deployment logic here
+        echo "url=https://staging.example.com" >> $GITHUB_OUTPUT
+    
+    - name: 'Run Smoke Tests'
+      run: |
+        echo "Running smoke tests..."
+        # Add your smoke tests here
+        curl -f https://staging.example.com/health || exit 1
+    
+    - name: 'Notify Slack'
+      if: always()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#deployments'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+
+  # Job 5: Deploy to Production
+  deploy-production:
+    name: 'Deploy to Production'
+    runs-on: ubuntu-latest
+    needs: [build, security-scan]
+    if: ${{ success() && (github.ref == 'refs/heads/main' || inputs.environment == 'production') }}
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    
+    steps:
+    - name: 'Deploy to Production'
+      id: deploy
+      run: |
+        echo "Deploying ${{ needs.build.outputs.image-tag }} to production..."
+        # Add your production deployment logic here
+        echo "url=https://app.example.com" >> $GITHUB_OUTPUT
+    
+    - name: 'Run Health Checks'
+      run: |
+        echo "Running production health checks..."
+        # Add your health checks here
+        curl -f https://app.example.com/health || exit 1
+    
+    - name: 'Create GitHub Release'
+      if: github.ref == 'refs/heads/main'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ github.run_number }}
+        release_name: Release v${{ github.run_number }}
+        body: |
+          ## Changes in this Release
+          - Deployed commit: ${{ github.sha }}
+          - Build: ${{ github.run_number }}
+          - Image: ${{ needs.build.outputs.image-tag }}
+          
+          **Full Changelog**: ${{ github.server_url }}/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.sha }}
+        draft: false
+        prerelease: false
+
+  # Job 6: Rollback (Manual trigger only)
+  rollback:
+    name: 'Rollback Deployment'
+    runs-on: ubuntu-latest
+    if: ${{ failure() && github.event_name == 'workflow_dispatch' }}
+    environment:
+      name: ${{ inputs.environment || 'staging' }}
+    
+    steps:
+    - name: 'Rollback to Previous Version'
+      run: |
+        echo "Rolling back ${{ inputs.environment || 'staging' }} deployment..."
+        # Add your rollback logic here
+    
+    - name: 'Verify Rollback'
+      run: |
+        echo "Verifying rollback..."
+        # Add verification steps here 

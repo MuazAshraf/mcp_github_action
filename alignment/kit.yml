@@ -1,0 +1,31 @@
+# Alignment Kit for MojoMosaic Fractal Network
+# All rules must score >= 0.9 to proceed with cycle
+
+alignment_rules:
+  performance:
+    tcpr_dim_1_9: 0.95  # Target TCPR ≤ 2s for Dim 1-9
+    tcpr_dim_27: 0.90   # Target TCPR ≤ 10s for Dim 27
+    
+  quality:
+    test_coverage: 0.90     # Minimum test coverage
+    code_quality: 0.95      # Code quality score
+    security_scan: 0.90     # Security scan pass rate
+    
+  operational:
+    logging_completeness: 0.95  # All calls logged with BEGIN/END + parent-child IDs
+    error_handling: 0.90        # Proper error handling coverage
+    monitoring: 0.85            # Monitoring and metrics coverage
+    
+  business:
+    acceptance_tests: 1.0   # All 6 acceptance tests must pass (6/6)
+    integration_time: 0.95  # Third-repo drop-in useful in < 10 min
+    demo_readiness: 0.90    # Demo functionality working
+
+thresholds:
+  halt_threshold: 0.9     # Abort cycle if any rule < 0.9
+  warning_threshold: 0.95 # Warning if any rule < 0.95
+
+metadata:
+  version: "1.1"
+  last_updated: "2025-05-24"
+  sprint_duration_hours: 8 

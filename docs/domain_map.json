@@ -1,0 +1,26 @@
+{
+  "dimensions": {
+    "dim_1_9": {
+      "description": "Primary fractal dimensions",
+      "tcpr_target": 2.0,
+      "complexity": "low"
+    },
+    "dim_10_27": {
+      "description": "Extended fractal dimensions",
+      "tcpr_target": 10.0,
+      "complexity": "medium"
+    },
+    "dim_28_81": {
+      "description": "Future expansion dimensions",
+      "tcpr_target": 30.0,
+      "complexity": "high"
+    }
+  },
+  "components": {
+    "orchestrator": "Central coordination hub",
+    "seed_repo_1": "Primary fractal generator",
+    "seed_repo_2": "Secondary fractal processor",
+    "vector_memory": "Distributed memory layer",
+    "metrics_engine": "Performance monitoring"
+  }
+}

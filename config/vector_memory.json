@@ -1,0 +1,7 @@
+{
+  "provider": "pinecone",
+  "dimensions": 1536,
+  "metric": "cosine",
+  "index_name": "mojomosaic-fractal",
+  "environment": "local-dev"
+}
